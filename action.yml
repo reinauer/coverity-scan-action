@@ -69,8 +69,15 @@ runs:
     - name: Lookup Coverity Build Tool hash
       id: coverity-cache-lookup
       run: |
-        hash=$(curl https://scan.coverity.com/download/${{ inputs.build_language }}/${{ inputs.build_platform }} \
-                 --data "token=${TOKEN}&project=${{ steps.project.outputs.project }}&md5=1"); \
+        hash=$(curl -sf https://scan.coverity.com/download/${{ inputs.build_language }}/${{ inputs.build_platform }} \
+                 --data "token=${TOKEN}&project=${{ steps.project.outputs.project }}&md5=1") || {
+          echo "::error::Coverity Scan API request failed. Is the service down? Check https://scan.coverity.com and verify your token and submission quota."
+          exit 1
+        }
+        if ! echo "${hash}" | grep -qE '^[0-9a-f]{32}$'; then
+          echo "::error::Coverity Scan API returned unexpected response (expected MD5 hash): ${hash:0:200}"
+          exit 1
+        fi
         echo "hash=${hash}" >> $GITHUB_OUTPUT
       shell: bash
       env:
