@@ -71,12 +71,14 @@ runs:
       run: |
         hash=$(curl -sf https://scan.coverity.com/download/${{ inputs.build_language }}/${{ inputs.build_platform }} \
                  --data "token=${TOKEN}&project=${{ steps.project.outputs.project }}&md5=1") || {
-          echo "::error::Coverity Scan API request failed. Is the service down? Check https://scan.coverity.com and verify your token and submission quota."
-          exit 1
+          echo "::warning::Coverity Scan API request failed. Is the service down? Check https://scan.coverity.com and verify your token and submission quota."
+          echo "skipped=true" >> $GITHUB_OUTPUT
+          exit 0
         }
         if ! echo "${hash}" | grep -qE '^[0-9a-f]{32}$'; then
-          echo "::error::Coverity Scan API returned unexpected response (expected MD5 hash): ${hash:0:200}"
-          exit 1
+          echo "::warning::Coverity Scan API returned unexpected response (expected MD5 hash): ${hash:0:200}"
+          echo "skipped=true" >> $GITHUB_OUTPUT
+          exit 0
         fi
         echo "hash=${hash}" >> $GITHUB_OUTPUT
       shell: bash
@@ -86,6 +88,7 @@ runs:
     # Try to cache the tool to avoid downloading 1GB+ archive on every run.
     # Cache miss will add ~30s to create, but cache hit will save minutes.
     - name: Cache Coverity Build Tool
+      if: steps.coverity-cache-lookup.outputs.skipped != 'true'
       id: cov-build-cache
       uses: actions/cache@v4
       with:
@@ -93,7 +96,7 @@ runs:
         key: cov-build-${{ inputs.build_language }}-${{ inputs.build_platform }}-${{ steps.coverity-cache-lookup.outputs.hash }}
 
     - name: Download Coverity Build Tool (${{ inputs.build_language }} / ${{ inputs.build_platform }})
-      if: steps.cov-build-cache.outputs.cache-hit != 'true'
+      if: steps.coverity-cache-lookup.outputs.skipped != 'true' && steps.cov-build-cache.outputs.cache-hit != 'true'
       run: |
         curl https://scan.coverity.com/download/${{ inputs.build_language }}/${{ inputs.build_platform }} \
           --no-progress-meter \
@@ -104,16 +107,17 @@ runs:
       env:
         TOKEN: ${{ inputs.token }}
 
-    - if: steps.cov-build-cache.outputs.cache-hit != 'true'
+    - if: steps.coverity-cache-lookup.outputs.skipped != 'true' && steps.cov-build-cache.outputs.cache-hit != 'true'
       run: mkdir cov-analysis
       shell: bash
       working-directory: ${{ inputs.working-directory }}
-    - if: steps.cov-build-cache.outputs.cache-hit != 'true'
+    - if: steps.coverity-cache-lookup.outputs.skipped != 'true' && steps.cov-build-cache.outputs.cache-hit != 'true'
       run: tar -xzf cov-analysis.tar.gz --strip 1 -C cov-analysis
       shell: bash
       working-directory: ${{ inputs.working-directory }}
 
     - name: Build with cov-build
+      if: steps.coverity-cache-lookup.outputs.skipped != 'true'
       run: |
         export PATH="${PWD}/cov-analysis/bin:${PATH}"
         cov-configure ${{ inputs.configure }}
@@ -122,10 +126,12 @@ runs:
       working-directory: ${{ inputs.working-directory }}
 
     - name: Archive results
+      if: steps.coverity-cache-lookup.outputs.skipped != 'true'
       run: tar -czvf cov-int.tgz cov-int
       shell: bash
       working-directory: ${{ inputs.working-directory }}
     - name: Submit results to Coverity Scan
+      if: steps.coverity-cache-lookup.outputs.skipped != 'true'
       run: |
         curl \
           --form token="${TOKEN}" \
